@@ -1,0 +1,41 @@
+# =========================
+# Python / Virtual Envs
+# =========================
+__pycache__/
+*.py[cod]
+*.pyd
+.venv/
+venv/
+env/
+
+# =========================
+# OS junk
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# IDE / PyCharm
+# =========================
+.idea/
+*.iml
+
+# =========================
+# Data (do NOT commit raw datasets)
+# =========================
+data/data_raw/*.csv
+data/raw/*.csv
+*.csv
+
+# If you only want to ignore the Prosper file instead of all CSVs, use this instead:
+# data/data_raw/prosperLoanData.csv
+
+# =========================
+# Model artifacts / outputs (do NOT commit)
+# =========================
+models/
+outputs/
+*.joblib
+*.pkl
+*.parquet
+*.txt
