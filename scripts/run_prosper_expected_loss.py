@@ -32,8 +32,8 @@ NEG_STATUSES = {"Completed"}
 
 DEFAULT_LEAKAGE_EXACT = {
     "ClosedDate",
-    "EstimatedLoss",               # label-proxy-ish
-    "ProsperPrincipalOutstanding", # post-origination state (drop for underwriting framing)
+    "EstimatedLoss",
+    "ProsperPrincipalOutstanding",
 }
 
 DEFAULT_LEAKAGE_PREFIXES = ("LP_",)
@@ -49,7 +49,7 @@ MIN_LGD_ROWS = 200
 
 
 # ----------------------------
-# Small helpers
+# Helpers
 # ----------------------------
 
 @dataclass
@@ -67,11 +67,6 @@ def safe_mkdir(path: str) -> None:
 
 
 def to_datetime_safe(s: pd.Series) -> pd.Series:
-    """
-    One true date parser. No re-parsing elsewhere.
-    - errors='coerce' prevents crashes
-    - utc=True then tz_convert(None) standardizes
-    """
     return pd.to_datetime(s.astype(str), errors="coerce", utc=True).dt.tz_convert(None)
 
 
@@ -82,16 +77,15 @@ def infer_feature_types(df: pd.DataFrame) -> Tuple[List[str], List[str]]:
 
 
 def build_preprocessor(num_cols: List[str], cat_cols: List[str]) -> ColumnTransformer:
-    numeric_pipe = Pipeline(
-        steps=[("imputer", SimpleImputer(strategy="median"))]
-    )
+    numeric_pipe = Pipeline(steps=[("imputer", SimpleImputer(strategy="median"))])
+
     categorical_pipe = Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="most_frequent")),
-            # Use sparse=True for broad sklearn compatibility
             ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=True)),
         ]
     )
+
     return ColumnTransformer(
         transformers=[
             ("num", numeric_pipe, num_cols),
@@ -117,15 +111,12 @@ def build_resolved_cohort(df: pd.DataFrame) -> pd.DataFrame:
     if "LoanStatus" not in df.columns:
         raise ValueError("LoanStatus column not found.")
     keep = POS_STATUSES.union(NEG_STATUSES)
-    out = df[df["LoanStatus"].isin(keep)].copy()
-    return out
+    return df[df["LoanStatus"].isin(keep)].copy()
 
 
 def build_labels(df: pd.DataFrame) -> pd.DataFrame:
-    # PD label
     df["y_pd"] = df["LoanStatus"].isin(POS_STATUSES).astype(int)
 
-    # EAD proxy
     if "ProsperPrincipalBorrowed" in df.columns:
         df["ead"] = pd.to_numeric(df["ProsperPrincipalBorrowed"], errors="coerce")
     elif "LoanOriginalAmount" in df.columns:
@@ -133,18 +124,15 @@ def build_labels(df: pd.DataFrame) -> pd.DataFrame:
     else:
         raise ValueError("No EAD proxy found (ProsperPrincipalBorrowed or LoanOriginalAmount).")
 
-    # Loss label (for LGD / EL)
     if "LP_NetPrincipalLoss" not in df.columns:
         raise ValueError("LP_NetPrincipalLoss not found; cannot build LGD label cleanly.")
     df["loss"] = pd.to_numeric(df["LP_NetPrincipalLoss"], errors="coerce")
 
-    # LGD label (only meaningful for defaults)
     df["y_lgd"] = 0.0
     mask_def = df["y_pd"] == 1
     denom = df.loc[mask_def, "ead"].replace(0, np.nan)
     df.loc[mask_def, "y_lgd"] = (df.loc[mask_def, "loss"] / denom).clip(0, 1).fillna(0.0)
 
-    # Realized expected loss label (for evaluation)
     df["y_el"] = df["y_pd"] * df["y_lgd"] * df["ead"]
     return df
 
@@ -152,31 +140,25 @@ def build_labels(df: pd.DataFrame) -> pd.DataFrame:
 def build_leakage_drop_list(df: pd.DataFrame, include_snapshot_features: bool) -> Set[str]:
     drop_cols: Set[str] = set()
 
-    # labels
     drop_cols.update({"y_pd", "y_lgd", "y_el", "loss", "ead"})
 
-    # obvious IDs
     for id_col in ["ListingKey", "ListingNumber", "LoanKey", "LoanNumber", "MemberKey"]:
         if id_col in df.columns:
             drop_cols.add(id_col)
 
-    # leakage prefixes
     for c in df.columns:
         if c.startswith(DEFAULT_LEAKAGE_PREFIXES):
             drop_cols.add(c)
 
-    # leakage exact
     for c in DEFAULT_LEAKAGE_EXACT:
         if c in df.columns:
             drop_cols.add(c)
 
-    # snapshot fields (optional)
     if not include_snapshot_features:
         for c in DEFAULT_SNAPSHOT_FIELDS:
             if c in df.columns:
                 drop_cols.add(c)
 
-    # Don't allow target status or time as features
     if "LoanStatus" in df.columns:
         drop_cols.add("LoanStatus")
     if DATE_COL in df.columns:
@@ -186,16 +168,10 @@ def build_leakage_drop_list(df: pd.DataFrame, include_snapshot_features: bool) -
 
 
 def time_split(df: pd.DataFrame, test_size: float = 0.2) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Time-based split using DATE_COL if present and sufficiently populated.
-    Fallback to stratified random split if date is missing/sparse.
-    """
     if DATE_COL not in df.columns:
         return train_test_split(df, test_size=test_size, random_state=42, stratify=df["y_pd"])
 
-    # Drop NaT dates for splitting; keep non-dated rows for random fallback later if needed
     dated = df.dropna(subset=[DATE_COL]).copy()
-
     if len(dated) < 200:
         return train_test_split(df, test_size=test_size, random_state=42, stratify=df["y_pd"])
 
@@ -207,7 +183,6 @@ def time_split(df: pd.DataFrame, test_size: float = 0.2) -> Tuple[pd.DataFrame, 
     train_df = dated[dated[DATE_COL] < cutoff_date].copy()
     test_df = dated[dated[DATE_COL] >= cutoff_date].copy()
 
-    # Guardrail fallback if split is too small
     if len(train_df) < 100 or len(test_df) < 100:
         return train_test_split(df, test_size=test_size, random_state=42, stratify=df["y_pd"])
 
@@ -226,7 +201,6 @@ def train_pd_model(train_df: pd.DataFrame, drop_cols: Set[str], calibrate: bool)
     pre = build_preprocessor(num_cols, cat_cols)
 
     base_clf = LogisticRegression(max_iter=20000, solver="saga")
-
     clf = CalibratedClassifierCV(estimator=base_clf, method="isotonic", cv=3) if calibrate else base_clf
 
     model = Pipeline(steps=[("pre", pre), ("clf", clf)])
@@ -235,26 +209,15 @@ def train_pd_model(train_df: pd.DataFrame, drop_cols: Set[str], calibrate: bool)
 
 
 def empirical_lgd(train_df: pd.DataFrame) -> float:
-    """
-    Stable, simple LGD: mean LGD among defaults.
-    Falls back to DEFAULT_LGD if defaults are sparse.
-    """
     df_def = train_df[train_df["y_pd"] == 1]
-    if len(df_def) < MIN_LGD_ROWS:
-        lgd = df_def["y_lgd"].clip(0, 1).mean()
-        if pd.isna(lgd):
-            lgd = DEFAULT_LGD
-        return float(lgd)
     lgd = df_def["y_lgd"].clip(0, 1).mean()
-    return float(lgd) if not pd.isna(lgd) else float(DEFAULT_LGD)
+    if pd.isna(lgd):
+        return float(DEFAULT_LGD)
+    # if sparse defaults, keep it anyway (still stable enough for demo)
+    return float(lgd)
 
 
-def score_expected_loss(
-    df: pd.DataFrame,
-    pd_model: Pipeline,
-    lgd_value: float,
-    drop_cols: Set[str],
-) -> pd.DataFrame:
+def score_expected_loss(df: pd.DataFrame, pd_model: Pipeline, lgd_value: float, drop_cols: Set[str]) -> pd.DataFrame:
     out = df.copy()
     X = out.drop(columns=[c for c in drop_cols if c in out.columns], errors="ignore")
 
@@ -292,13 +255,28 @@ def eval_collections(test_scored: pd.DataFrame, k: int = 500) -> EvalResults:
     lift = (topk_avg / baseline) if baseline and baseline > 0 else float("nan")
 
     return EvalResults(
-        auc=auc,
-        ap=ap,
-        brier=brier,
+        auc=float(auc),
+        ap=float(ap),
+        brier=float(brier),
         loss_at_k=float(loss_at_k),
         capture_at_k=float(capture_at_k),
         lift_at_k=float(lift),
     )
+
+
+def top_k_metrics(df: pd.DataFrame, k_values=(100, 250, 500)) -> pd.DataFrame:
+    df = df.sort_values("el_pred", ascending=False).copy()
+    total_loss = df["y_el"].sum()
+
+    rows = []
+    for k in k_values:
+        kk = min(k, len(df))
+        topk = df.head(kk)
+        loss_at_k = topk["y_el"].sum()
+        capture = loss_at_k / total_loss if total_loss > 0 else 0.0
+        rows.append({"k": kk, "loss_at_k": float(loss_at_k), "capture_at_k": float(capture)})
+
+    return pd.DataFrame(rows)
 
 
 # ----------------------------
@@ -316,10 +294,12 @@ def main() -> None:
     parser.add_argument("--calibrate_pd", action="store_true", help="If set, calibrates PD probabilities.")
     parser.add_argument("--out_dir", default="outputs", help="Output directory")
     parser.add_argument("--model_dir", default="models", help="Model directory")
+    parser.add_argument("--report_dir", default="report_metrics", help="Metrics output directory")
     args = parser.parse_args()
 
     safe_mkdir(args.out_dir)
     safe_mkdir(args.model_dir)
+    safe_mkdir(args.report_dir)
 
     print("Loading data...")
     df = load_data(args.csv, nrows=args.nrows)
@@ -333,10 +313,9 @@ def main() -> None:
     print("Building labels (PD/LGD/EAD/EL)...")
     df = build_labels(df)
 
-    # Drop unusable rows
     df = df.dropna(subset=["ead"]).copy()
     df.loc[(df["y_pd"] == 1) & (df["loss"].isna()), "loss"] = 0.0
-    df = build_labels(df)  # recompute cleanly
+    df = build_labels(df)
 
     drop_cols = build_leakage_drop_list(df, include_snapshot_features=args.include_snapshot_features)
 
@@ -364,12 +343,12 @@ def main() -> None:
     print(f"Capture@{args.k}:   {results.capture_at_k:.4f}")
     print(f"Lift@{args.k}:      {results.lift_at_k:.2f}")
 
-    # Save artifacts
+    # Save model artifacts
     joblib.dump(pd_model, os.path.join(args.model_dir, "pd_model.joblib"))
     with open(os.path.join(args.model_dir, "lgd_value.txt"), "w", encoding="utf-8") as f:
         f.write(str(lgd_value))
 
-    # Export top-K ranking for action
+    # Save outputs for plots + actions
     ranked = test_scored.sort_values("el_pred", ascending=False).head(min(args.k, len(test_scored))).copy()
     ranked_cols = []
     if "ListingKey" in ranked.columns:
@@ -378,11 +357,18 @@ def main() -> None:
     ranked_out = ranked[ranked_cols] if ranked_cols else ranked
 
     ranked_out.to_csv(os.path.join(args.out_dir, f"top_{args.k}_ranked_accounts.csv"), index=False)
+    test_scored.to_csv(os.path.join(args.out_dir, "test_scored.csv"), index=False)
+
+    # Capacity metrics CSV
+    metrics_df = top_k_metrics(test_scored, k_values=(100, 250, 500))
+    metrics_df.to_csv(os.path.join(args.report_dir, "capacity_metrics.csv"), index=False)
 
     print("\nSaved:")
     print(f"- {args.model_dir}/pd_model.joblib")
     print(f"- {args.model_dir}/lgd_value.txt")
     print(f"- {args.out_dir}/top_{args.k}_ranked_accounts.csv")
+    print(f"- {args.out_dir}/test_scored.csv")
+    print(f"- {args.report_dir}/capacity_metrics.csv")
 
 
 if __name__ == "__main__":
