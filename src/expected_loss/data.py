@@ -23,7 +23,7 @@ def load_data(path: str, nrows: Optional[int] = None) -> pd.DataFrame:
 def build_resolved_cohort(df: pd.DataFrame) -> pd.DataFrame:
     """
     Keep only loans with statuses we can label as resolved:
-    POS_STATUSES (defaults/chargedoff) + NEG_STATUSES (completed).
+    POS_STATUSES (defaults/charged-off) + NEG_STATUSES (completed).
     """
     if "LoanStatus" not in df.columns:
         raise ValueError("LoanStatus column not found")
@@ -36,7 +36,7 @@ def build_resolved_cohort(df: pd.DataFrame) -> pd.DataFrame:
 def build_labels(df: pd.DataFrame) -> pd.DataFrame:
     """
     Build:
-    - y_pd: 1 if default/chargedoff else 0
+    - y_pd: 1 if default/charged-off else 0
     - ead: exposure proxy
     - loss: net principal loss
     - y_lgd: loss/ead for defaults (clipped 0..1)
@@ -78,7 +78,7 @@ def time_split(
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Time-based split if DATE_COL exists and has enough rows.
-    Otherwise falls back to stratified random split.
+    Otherwise, falls back to stratified random split.
     """
     from sklearn.model_selection import train_test_split
 
