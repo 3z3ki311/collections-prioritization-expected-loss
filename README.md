@@ -1,24 +1,59 @@
-# Collections Prioritization with Expected Loss (PD × LGD × EAD) — Prosper Loans
+# Collections Risk & Expected Loss Decision System
 
-## Overview
-Collections teams operate under **capacity constraints** (limited calls/emails per day).  
-This project builds an **applied machine learning decisioning pipeline** that ranks loan accounts by **Expected Loss** so that outreach efforts focus on the highest-impact accounts first.
+### PD × LGD × EAD | Credit Risk | Collections Prioritization | Machine Learning
 
-**Expected Loss (EL)** is defined as:
+An end-to-end credit collections decision system that estimates account-level
+**Expected Loss (EL)** and ranks accounts for capacity-constrained collections
+strategies.
 
-> **EL = P(Default) × Loss Given Default × Exposure at Default**
+Instead of optimizing classification accuracy alone, the system answers a
+business question:
 
-Rather than optimizing classification accuracy alone, this project focuses on **decision quality under operational constraints**.
+> **If a collections team can contact only K accounts today, which accounts
+> should be prioritized to maximize expected loss captured?**
+
+Expected Loss is modeled as:
+
+**EL = Probability of Default (PD) × Loss Given Default (LGD) × Exposure at Default (EAD)**
+
+The project includes model training, probability calibration, expected-loss
+scoring, lift/capture evaluation, SHAP explainability, drift monitoring,
+diagnostic reporting, and an API layer.
 
 ---
 
-## Problem Statement
-Given a portfolio of loan accounts and a daily outreach capacity **K** (e.g., 200 / 500 / 1000), produce a ranked list of accounts such that contacting the top **K** accounts **maximizes expected loss captured** relative to random or heuristic approaches.
+## Business Problem
 
-**Primary deliverable:**  
-A ranked CSV of accounts ordered by predicted expected loss.
+Collections teams operate under finite operational capacity.
+
+A team may have thousands of delinquent or at-risk accounts but only enough
+agents to contact a fraction of them each day.
+
+Traditional prioritization methods may rely on:
+
+- account balance
+- delinquency status
+- simple risk scores
+- manual rules
+
+These methods do not necessarily identify the accounts associated with the
+greatest potential financial loss.
+
+This project creates a decision framework that combines:
+
+- **Probability of Default**
+- **Loss Severity**
+- **Financial Exposure**
+
+to rank accounts according to their predicted economic impact.
 
 ---
+
+## Decision Framework
+
+For each account:
+
+PD × LGD × EAD = Expected Loss
 
 ## Data
 **Source:** Public Prosper loan dataset  
@@ -76,7 +111,47 @@ This reflects real-world deployment where future accounts must be scored using o
 - Brier Score (calibration quality)
 
 These metrics ensure the model is both **useful** and **reasonable**.
+---
+## Key Results
 
+Held-out evaluation demonstrates that the Expected Loss ranking concentrates
+a disproportionate share of realized portfolio loss within the highest-priority
+accounts.
+
+### PD Model Performance
+
+| Metric | Result |
+|---|---:|
+| ROC-AUC | **0.6479** |
+| Average Precision (AP) | **0.3472** |
+| Brier Score | **0.1821** |
+
+### Capacity-Constrained Collections Performance
+
+| Daily Capacity | Loss Captured | Capture Rate | Lift vs. Random |
+|---:|---:|---:|---:|
+| Top 200 | **$512,267** | **19.81%** | **2.08×** |
+| Top 500 | **$1,189,073** | **45.98%** | **1.93×** |
+| Top 1,000 | **$1,844,245** | **71.32%** | **1.50×** |
+
+### Business Interpretation
+
+At a capacity of only **200 accounts**, the Expected Loss ranking identifies
+accounts associated with approximately **19.8% of realized portfolio loss**,
+producing **2.08× the loss capture expected from random selection**.
+
+Increasing capacity to **500 accounts** captures approximately **46.0% of
+realized loss** while maintaining **1.93× lift** over random prioritization.
+
+At **1,000 accounts**, the strategy captures approximately **71.3% of realized
+loss**.
+
+The declining lift as capacity expands is expected: the highest-risk accounts
+are concentrated near the top of the ranking, so marginal accounts added at
+larger capacities contain progressively less loss.
+
+These results illustrate why the project optimizes for **decision quality under
+operational constraints**, rather than classification accuracy alone.
 ---
 
 ## Outputs
@@ -98,9 +173,33 @@ The ranked CSV includes (when available):
 
 ## How to Run
 
-### 1) Inspect the dataset
+### 1) Create and activate a virtual environment
+
 ```bash
-python scripts/inspect_prosper.py
-python scripts/run_prosper_expected_loss.py \
-  --csv data/data_raw/prosperLoanData.csv \
+python -m venv .venv
+```
+--Windows
+.venv\Scripts\activate
+--macOS/Linux
+source .venv/bin/activate
+
+### 2) Install the project
+```bash
+python -m pip install -e
+```
+### 3) Examine dataset
+```
+python inspect_prosper.py
+```
+### 4) Run the Expected Loss Pipeline
+```
+python run_prosper_expected_loss.py \
+  --csv /path/to/prosperLoanData.csv \
+  --k 500 \
   --calibrate_pd
+```
+### 5 Evaluate
+```
+python run_prosper_expected_loss.py --csv /path/to/prosperLoanData.csv --k 200 --calibrate_pd
+python run_prosper_expected_loss.py --csv /path/to/prosperLoanData.csv --k 500 --calibrate_pd
+python run_prosper_expected_loss.py --csv /path/to/prosperLoanData.csv --k 1000 --calibrate_pd
