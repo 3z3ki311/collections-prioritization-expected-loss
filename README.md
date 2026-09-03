@@ -153,6 +153,14 @@ larger capacities contain progressively less loss.
 These results illustrate why the project optimizes for **decision quality under
 operational constraints**, rather than classification accuracy alone.
 ---
+### Expected Loss Prioritization
+
+![Expected Loss Collections Prioritization](reports/figures/lift_curve.png)
+
+The Expected Loss ranking concentrates realized portfolio losses toward the
+top of the collections queue. At a capacity of 200 accounts, the ranking
+achieves 2.08× lift relative to random selection.
+---
 
 ## Outputs
 Running the pipeline produces:
