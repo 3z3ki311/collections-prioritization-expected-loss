@@ -5,7 +5,7 @@ import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-
+from matplotlib.ticker import PercentFormatter
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
 from sklearn.calibration import calibration_curve
 
@@ -48,31 +48,176 @@ def load_test_scored(path: str) -> pd.DataFrame:
 # Plots
 # -------------------------
 def plot_lift_curve(df: pd.DataFrame) -> None:
-    # Sort by predicted expected loss (decision ranking)
+    """
+    Plot cumulative realized-loss capture when accounts are ranked
+    by predicted Expected Loss (PD × LGD × EAD).
+
+    Also annotates operational collection capacities such as
+    Top 200, Top 500, and Top 1,000 accounts.
+    """
+
+    # Sort accounts by predicted Expected Loss
     df = df.sort_values("el_pred", ascending=False).copy()
 
     total_loss = df["y_el"].sum()
+
     if total_loss <= 0:
-        print("Skipping lift curve: total realized loss y_el is 0 (nothing to capture).")
+        print(
+            "Skipping lift curve: total realized loss y_el is 0 "
+            "(nothing to capture)."
+        )
         return
 
+    # ---------------------------------------------------------
+    # Cumulative loss capture
+    # ---------------------------------------------------------
     df["cum_loss"] = df["y_el"].cumsum()
     df["cum_pct_accounts"] = np.arange(1, len(df) + 1) / len(df)
     df["cum_pct_loss"] = df["cum_loss"] / total_loss
 
-    # Random baseline: y = x
-    plt.figure()
-    plt.plot(df["cum_pct_accounts"], df["cum_pct_loss"], label="Model (rank by EL)")
-    plt.plot([0, 1], [0, 1], linestyle="--", label="Random baseline")
-    plt.xlabel("Fraction of Accounts Contacted")
-    plt.ylabel("Fraction of Total Loss Captured")
-    plt.title("Lift Curve (Expected Loss Prioritization)")
-    plt.grid(True)
-    plt.legend()
+    # Add origin so curve starts at (0, 0)
+    x_model = np.concatenate(
+        ([0], df["cum_pct_accounts"].to_numpy())
+    )
+
+    y_model = np.concatenate(
+        ([0], df["cum_pct_loss"].to_numpy())
+    )
+
+    # ---------------------------------------------------------
+    # Plot
+    # ---------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    ax.plot(
+        x_model,
+        y_model,
+        linewidth=2.5,
+        label="Expected Loss ranking"
+    )
+
+    # Random-selection benchmark
+    ax.plot(
+        [0, 1],
+        [0, 1],
+        linestyle="--",
+        linewidth=1.8,
+        label="Random selection"
+    )
+
+    # ---------------------------------------------------------
+    # Annotate operational capacity levels
+    # ---------------------------------------------------------
+    capacities = [200, 500, 1000]
+
+    annotation_offsets = {
+        200: (18, 25),
+        500: (18, 0),
+        1000: (18, -30),
+    }
+
+    for k in capacities:
+
+        if k > len(df):
+            continue
+
+        row = df.iloc[k - 1]
+
+        account_fraction = k / len(df)
+        capture_rate = row["cum_pct_loss"]
+
+        # Random selection would capture approximately x% of loss
+        random_capture = account_fraction
+
+        lift = (
+            capture_rate / random_capture
+            if random_capture > 0
+            else np.nan
+        )
+
+        ax.scatter(
+            account_fraction,
+            capture_rate,
+            s=55,
+            zorder=5
+        )
+
+        annotation = (
+            f"Top {k:,}\n"
+            f"Capture: {capture_rate:.1%}\n"
+            f"Lift: {lift:.2f}×"
+        )
+
+        ax.annotate(
+            annotation,
+            xy=(account_fraction, capture_rate),
+            xytext=annotation_offsets.get(k, (12, -5)),
+            textcoords="offset points",
+            fontsize=9,
+            va="center",
+            bbox={
+                "boxstyle": "round,pad=0.35",
+                "alpha": 0.85
+            },
+            arrowprops={
+                "arrowstyle": "->",
+                "linewidth": 1
+            }
+        )
+
+    # ---------------------------------------------------------
+    # Formatting
+    # ---------------------------------------------------------
+    ax.set_xlabel(
+        "Share of Accounts Contacted",
+        fontsize=11
+    )
+
+    ax.set_ylabel(
+        "Share of Realized Loss Captured",
+        fontsize=11
+    )
+
+    ax.set_title(
+        "Collections Prioritization by Expected Loss\n"
+        "PD × LGD × EAD | Cumulative Loss Capture",
+        fontsize=14,
+        fontweight="bold"
+    )
+
+    # Convert 0.2 -> 20%, etc.
+    ax.xaxis.set_major_formatter(
+        PercentFormatter(xmax=1)
+    )
+
+    ax.yaxis.set_major_formatter(
+        PercentFormatter(xmax=1)
+    )
+
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1.03)
+
+    ax.grid(
+        True,
+        alpha=0.3
+    )
+
+    ax.legend(
+        loc="lower right",
+        frameon=True
+    )
+
+    fig.tight_layout()
 
     out_path = os.path.join(REPORT_DIR, "lift_curve.png")
-    plt.savefig(out_path, dpi=200, bbox_inches="tight")
-    plt.close()
+
+    fig.savefig(
+        out_path,
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.close(fig)
 
 
 def plot_calibration(df: pd.DataFrame, n_bins: int = 10) -> None:

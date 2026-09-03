@@ -8,13 +8,13 @@ from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder
 
-from .config import (
+
+from .constants import (
     DATE_COL,
     DEFAULT_LEAKAGE_EXACT,
     DEFAULT_LEAKAGE_PREFIXES,
     DEFAULT_SNAPSHOT_FIELDS,
 )
-
 
 def infer_feature_types(df: pd.DataFrame) -> Tuple[List[str], List[str]]:
     num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
@@ -68,3 +68,5 @@ def build_leakage_drop_list(df: pd.DataFrame, include_snapshot_features: bool) -
         drop_cols.add(DATE_COL)
 
     return drop_cols
+
+build_preprocess = build_preprocessor

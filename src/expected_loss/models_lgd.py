@@ -8,7 +8,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.ensemble import HistGradientBoostingRegressor
 
 
-from .config import DEFAULT_LGD, MIN_LGD_ROWS
+from .constants import DEFAULT_LGD, MIN_LGD_ROWS
 from .features import infer_feature_types, build_preprocess
 
 

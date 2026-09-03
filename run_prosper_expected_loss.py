@@ -369,6 +369,12 @@ def main() -> None:
     with open(os.path.join(args.model_dir, "lgd_value.txt"), "w", encoding="utf-8") as f:
         f.write(str(lgd_value))
 
+    # Save the full held-out scored test set for diagnostics
+    test_scored.to_csv(
+        os.path.join(args.out_dir, "test_scored.csv"),
+        index=False
+    )
+
     # Export top-K ranking for action
     ranked = test_scored.sort_values("el_pred", ascending=False).head(min(args.k, len(test_scored))).copy()
     ranked_cols = []
@@ -382,6 +388,7 @@ def main() -> None:
     print("\nSaved:")
     print(f"- {args.model_dir}/pd_model.joblib")
     print(f"- {args.model_dir}/lgd_value.txt")
+    print(f"- {args.out_dir}/test_scored.csv")
     print(f"- {args.out_dir}/top_{args.k}_ranked_accounts.csv")
 
 

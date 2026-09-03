@@ -1,24 +1,24 @@
 # Model Card — Expected Loss Prioritization (Prosper)
 
 ## 1) Problem & Business Objective
-**Goal:** Rank accounts under daily collections capacity (Top-K calls/emails) to maximize **expected loss captured**.
+**Goal:** Rank loan accounts under collections outreach under capacity constraints to maximize **expected loss captured**.
 
-**Decision:** Contact the top **K** accounts ranked by:
+**Decision:** 
 > **Expected Loss = PD × LGD × EAD**
 
 ## 2) Data
 **Source:** Prosper public dataset (`prosperLoanData.csv`)
 
-**Cohort definition:**
+**Cohort result outcomes only:**
 - Positive class (default): `Chargedoff`, `Defaulted`
 - Negative class (non-default): `Completed`
 
 **Time field used for split:** `ListingCreationDate`
 
 ## 3) Labels & Targets
-- **PD label (`y_pd`)**: 1 if loan status is defaulted/charged off, else 0
-- **EAD (`ead`)**: proxy using `ProsperPrincipalBorrowed` (fallback `LoanOriginalAmount`)
-- **LGD (`y_lgd`)**: `LP_NetPrincipalLoss / ead` for defaults, clipped [0,1]
+- **PD  (`y_pd`)**: 1 {loan status in default}
+- **EAD (`ead`)**: proxy using `ProsperPrincipalBorrowed` (fallback: `LoanOriginalAmount`)
+- **LGD (`y_lgd`)**: `LP_NetPrincipalLoss / ead`  clipped [0,1]
 - **Realized loss (`y_el`)**: `y_pd × y_lgd × ead`
 
 ## 4) Split Strategy
@@ -37,9 +37,12 @@ Dropped:
 
 ## 6) Model
 **PD Model:** Logistic Regression (`solver=saga`, `max_iter=20000`)
-- Optional calibration: `CalibratedClassifierCV(method=isotonic, cv=3)`
+- Optional isotonic calibration: `CalibratedClassifierCV(method=isotonic, cv=3)`
 
-**LGD:** Empirical mean LGD among defaults (fallback default if sparse)
+**LGD:** 
+- Default: Empirical mean LGD among defaults (fallback default if sparse)
+- Optional: HistGradientBoostingRegressor trained on defaults ( --train_lgd_model
+- LGD predictions clipped to [0, 1]
 
 ## 7) Metrics
 ### Model Quality (Probability)

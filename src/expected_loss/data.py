@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from .config import DATE_COL, POS_STATUSES, NEG_STATUSES
+from .constants import DATE_COL, POS_STATUSES, NEG_STATUSES
 
 
 def to_datetime_safe(s: pd.Series) -> pd.Series:
@@ -23,7 +23,7 @@ def load_data(path: str, nrows: Optional[int] = None) -> pd.DataFrame:
 def build_resolved_cohort(df: pd.DataFrame) -> pd.DataFrame:
     """
     Keep only loans with statuses we can label as resolved:
-    POS_STATUSES (defaults/charged-off) + NEG_STATUSES (completed).
+    POS_STATUSES (completed) + NEG_STATUSES (chargedoff/defaulted).
     """
     if "LoanStatus" not in df.columns:
         raise ValueError("LoanStatus column not found")
@@ -32,20 +32,19 @@ def build_resolved_cohort(df: pd.DataFrame) -> pd.DataFrame:
     out = df[df["LoanStatus"].isin(keep)].copy()
     return out
 
-
 def build_labels(df: pd.DataFrame) -> pd.DataFrame:
     """
     Build:
     - y_pd: 1 if default/charged-off else 0
     - ead: exposure proxy
-    - loss: net principal loss
+    - loss: LP_GrossPrincipalLoss(fallback to net principal loss)
     - y_lgd: loss/ead for defaults (clipped 0..1)
     - y_el: realized expected loss = y_pd * y_lgd * ead
     """
     df = df.copy()
 
     # PD label
-    df["y_pd"] = df["LoanStatus"].isin(POS_STATUSES).astype(int)
+    df["y_pd"] = df["LoanStatus"].isin(NEG_STATUSES).astype(int)
 
     # EAD proxy (NOTE: Prosper column is ProsperPrincipalBorrowed)
     if "ProsperPrincipalBorrowed" in df.columns:
@@ -55,10 +54,9 @@ def build_labels(df: pd.DataFrame) -> pd.DataFrame:
     else:
         raise ValueError("No EAD proxy found (ProsperPrincipalBorrowed or LoanOriginalAmount).")
 
-    # Loss label (NOTE: Prosper column is LP_NetPrincipalLoss)
-    if "LP_NetPrincipalLoss" not in df.columns:
-        raise ValueError("LP_NetPrincipalLoss not found; cannot build LGD label cleanly.")
-    df["loss"] = pd.to_numeric(df["LP_NetPrincipalLoss"], errors="coerce")
+    # Loss label (prefer Gross Principal Loss; fallback to Net Principal Loss)
+    loss_col = "LP_GrossPrincipalLoss" if "LP_GrossPrincipalLoss" in df.columns else "LP_NetPrincipalLoss"
+    df["loss"] = pd.to_numeric(df[loss_col], errors="coerce")
 
     # LGD label (only meaningful for defaults)
     df["y_lgd"] = 0.0
@@ -68,8 +66,14 @@ def build_labels(df: pd.DataFrame) -> pd.DataFrame:
 
     # Realized expected loss (for evaluation)
     df["y_el"] = df["y_pd"] * df["y_lgd"] * df["ead"]
-    return df
 
+
+    # Guardrail BEFORE return
+    if df["y_pd"].nunique() < 2:
+        raise ValueError(
+            "Only one class in y_pd after cohort+labels. LoanStatus counts:\n"
+            f"{df['LoanStatus'].value_counts().head(20)}")
+    return df
 
 def time_split(
     df: pd.DataFrame,
@@ -77,30 +81,29 @@ def time_split(
     random_state: int = 42,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Time-based split if DATE_COL exists and has enough rows.
+    Time-based split if DATE_COL exists and has enough non-null date rows.
     Otherwise, falls back to stratified random split.
     """
     from sklearn.model_selection import train_test_split
 
-    if DATE_COL not in df.columns:
+    def _random_split(frame: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
         return train_test_split(
-            df,
+            frame,
             test_size=test_size,
             random_state=random_state,
-            stratify=df["y_pd"],
+            stratify=frame["y_pd"] if "y_pd" in frame.columns else None,
         )
+
+    if DATE_COL not in df.columns:
+        return _random_split(df)
 
     dated = df.dropna(subset=[DATE_COL]).copy()
 
     if len(dated) < 200:
-        return train_test_split(
-            df,
-            test_size=test_size,
-            random_state=random_state,
-            stratify=df["y_pd"],
-        )
+        return _random_split(df)
 
     dated = dated.sort_values(DATE_COL)
+
     cutoff_idx = int(len(dated) * (1 - test_size))
     cutoff_idx = max(1, min(cutoff_idx, len(dated) - 1))
     cutoff_date = dated.iloc[cutoff_idx][DATE_COL]
@@ -108,13 +111,7 @@ def time_split(
     train_df = dated[dated[DATE_COL] < cutoff_date].copy()
     test_df = dated[dated[DATE_COL] >= cutoff_date].copy()
 
-    # Guardrail fallback
     if len(train_df) < 100 or len(test_df) < 100:
-        return train_test_split(
-            df,
-            test_size=test_size,
-            random_state=random_state,
-            stratify=df["y_pd"],
-        )
+        return _random_split(dated)
 
     return train_df, test_df
